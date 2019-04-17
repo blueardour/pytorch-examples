@@ -1,6 +1,10 @@
 dcgan/data
 data
 *.pyc
+*.swp
 OpenNMT/data
 cpp/mnist/build
 cpp/dcgan/build
+imagenet/logs
+imagenet/utils
+imagenet/weights
