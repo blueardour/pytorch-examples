@@ -44,6 +44,7 @@ parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
+parser.add_argument('--iter-size', default=1, type=int)
 parser.add_argument('--val-batch-size', default=50, type=int)
 parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N',
@@ -103,6 +104,10 @@ def main():
     args.weights_dir = os.path.join(args.weights_dir, args.arch)
     utils.check_folder(args.weights_dir)
     args.resume_file = os.path.join(args.weights_dir, args.case + '-' + args.resume_file)
+
+    if args.iter_size < 1:
+        logging.info('iter_size must be equal or greater than one')
+        return
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -322,9 +327,13 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         top5.update(acc5[0], input.size(0))
 
         # compute gradient and do SGD step
-        optimizer.zero_grad()
+        if i % args.iter_size == 0:
+            optimizer.zero_grad()
+
         loss.backward()
-        optimizer.step()
+
+        if i % args.iter_size == (args.iter_size - 1):
+            optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -368,10 +377,6 @@ def validate(val_loader, model, criterion, args):
 
             if i % args.print_freq == 0:
                 progress.print(i)
-
-        # TODO: this should also be done with the ProgressMeter
-        #print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
-        #      .format(top1=top1, top5=top5))
 
     return top1.avg, top5.avg
 
