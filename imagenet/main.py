@@ -285,12 +285,15 @@ def main_worker(gpu, ngpus_per_node, args):
         train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1, acc5 = validate(val_loader, model, criterion, args)
+        acc1, acc5 = validate(val_loader, model, criterion, args, epoch)
         logging.info('evaluate accuracy top5(%f), top1(%f), best top1: %f' % (acc5, acc1, best_acc1))
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
+
+        if args.tensorboard is not None:
+            args.tensorboard.add_scalar('Train/lr', lr, epoch)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
@@ -353,10 +356,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     if args.tensorboard is not None:
         args.tensorboard.add_scalar('Train/top5', top5.avg, epoch)
         args.tensorboard.add_scalar('Train/top1', top1.avg, epoch)
-        args.tensorboard.add_scalar('Train/lr', lr, epoch)
 
 
-def validate(val_loader, model, criterion, args):
+def validate(val_loader, model, criterion, args, epoch=0):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
