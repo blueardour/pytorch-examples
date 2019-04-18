@@ -23,6 +23,8 @@ import model_zoo
 import utils
 import logging
 
+from tensorboardX import SummaryWriter
+
 pytorch_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
@@ -62,7 +64,6 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     dest='weight_decay')
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', '-r', action='store_true', default=False)
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
@@ -84,10 +85,12 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--resume', '-r', action='store_true', default=False)
 parser.add_argument('--log_dir', type=str, default='logs', help='log dir')
 parser.add_argument('--weights_dir', type=str, default='./weights/', help='save weights directory')
 parser.add_argument('--resume_file', type=str, default='checkpoint.pth.tar')
 parser.add_argument('--case', type=str, default='normal', help='identify the configuration of the training')
+parser.add_argument('--tensorboard', action='store_true', default=False)
 
 best_acc1 = 0
 
@@ -98,6 +101,11 @@ def main():
         os.makedirs(args.log_dir)
     log_filename = os.path.join(args.log_dir, args.arch + '-' + args.case + '.txt')
     utils.setup_logging(log_filename, resume=args.resume)
+
+    if args.tensorboard:
+        args.tensorboard = SummaryWriter(args.log_dir, filename_suffix='.' + args.arch + '.' + args.case)
+    else:
+        args.tensorboard = None
 
     utils.check_folder(args.weights_dir)
     args.weights_dir = os.path.join(args.weights_dir, args.arch)
@@ -270,18 +278,22 @@ def main_worker(gpu, ngpus_per_node, args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        utils.adjust_learning_rate(optimizer, epoch, args)
+        lr = utils.adjust_learning_rate(optimizer, epoch, args)
+        logging.info('learning rate %f at epoch %d' %(lr, epoch))
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1, acc5 = validate(val_loader, model, criterion, args)
+        acc1, acc5 = validate(val_loader, model, criterion, args, epoch)
         logging.info('evaluate accuracy top5(%f), top1(%f), best top1: %f' % (acc5, acc1, best_acc1))
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
+
+        if args.tensorboard is not None:
+            args.tensorboard.add_scalar('Train/lr', lr, epoch)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
@@ -341,8 +353,12 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.print(i)
 
+    if args.tensorboard is not None:
+        args.tensorboard.add_scalar('Train/top5', top5.avg, epoch)
+        args.tensorboard.add_scalar('Train/top1', top1.avg, epoch)
 
-def validate(val_loader, model, criterion, args):
+
+def validate(val_loader, model, criterion, args, epoch=0):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -377,6 +393,9 @@ def validate(val_loader, model, criterion, args):
             if i % args.print_freq == 0:
                 progress.print(i)
 
+    if args.tensorboard is not None and args.evaluate != True:
+        args.tensorboard.add_scalar('Eval/top5', top5.avg, epoch)
+        args.tensorboard.add_scalar('Eval/top1', top1.avg, epoch)
     return top1.avg, top5.avg
 
 
