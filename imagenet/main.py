@@ -217,7 +217,7 @@ def main_worker(gpu, ngpus_per_node, args):
     params = []
     for key, value in params_dict.items():
         shape = value.shape
-        if len(shape) == 4 && shape[1] == 1:
+        if len(shape) == 4 and shape[1] == 1:
             params += [{'params':value, 'weight_decay':0}]
         else:
             params += [{'params':value}]
