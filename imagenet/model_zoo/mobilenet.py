@@ -1,4 +1,4 @@
-
+import torch
 import torch.nn as nn
 import math
 
@@ -9,14 +9,12 @@ def conv_bn(inp, oup, stride):
         nn.ReLU6(inplace=True)
     )
 
-
 def conv_1x1_bn(inp, oup):
     return nn.Sequential(
         nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
         nn.BatchNorm2d(oup),
         nn.ReLU6(inplace=True)
     )
-
 
 class InvertedResidual(nn.Module):
     def __init__(self, inp, oup, stride, expand_ratio):
@@ -123,3 +121,54 @@ class MobileNetV2(nn.Module):
                 n = m.weight.size(1)
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
+
+class conv_dw(nn.Module):
+    def __init__(self, inp, oup, stride, bitW=32, bitA=32, base=5):
+        super(conv_dw, self).__init__()
+        self.layer = nn.Sequential(
+            nn.Conv2d(inp, inp, 3, stride, 1, groups=inp, bias=False),
+            nn.BatchNorm2d(inp),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(oup),
+            nn.ReLU(inplace=True),
+        )
+    def forward(self, x):
+        return self.layer(x)
+
+class MobileNetV1(nn.Module):
+    def __init__(self, n_class=1000, input_size=224, width_mult=1., bitW=32, bitA=32, base=5, **kwargs):
+        super(MobileNetV1, self).__init__()
+        bottle = conv_dw
+        self.model = nn.Sequential(
+            conv_bn( 3,  32, 2), 
+            bottle( 32,  64, 1),
+            bottle( 64, 128, 2),
+            bottle(128, 128, 1),
+            bottle(128, 256, 2),
+            bottle(256, 256, 1),
+            bottle(256, 512, 2),
+            bottle(512, 512, 1),
+            bottle(512, 512, 1),
+            bottle(512, 512, 1),
+            bottle(512, 512, 1),
+            bottle(512, 512, 1),
+            bottle(512, 1024, 2),
+            bottle(1024, 1024, 1),
+        )
+
+        self.pooling = nn.AvgPool2d(input_size // 32)
+        self.classifier = nn.Sequential (
+            nn.Dropout(0.2),
+            nn.Linear(1024, n_class)
+        )
+
+    def forward(self, x):
+        x = self.model(x)
+        x = self.pooling(x)
+        x = x.view(-1, 1024)
+        x = self.classifier(x)
+        return x
+
+

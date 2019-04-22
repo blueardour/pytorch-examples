@@ -62,6 +62,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
+parser.add_argument('--nesterov',  action='store_true', default=False)
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -212,9 +213,18 @@ def main_worker(gpu, ngpus_per_node, args):
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
+    params_dict = dict(model.named_parameters())
+    params = []
+    for key, value in params_dict.items():
+        shape = value.shape
+        if len(shape) == 4 && shape[1] == 1:
+            params += [{'params':value, 'weight_decay':0}]
+        else:
+            params += [{'params':value}]
+    optimizer = torch.optim.SGD(params, args.lr,
                                 momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+                                weight_decay=args.weight_decay,
+                                nesterov=args.nesterov)
 
     # optionally resume from a checkpoint
     if args.resume:
