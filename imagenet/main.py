@@ -30,7 +30,6 @@ pytorch_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 model_names = sorted(model_zoo.model_names + pytorch_names)
-#print(model_names)
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--data', metavar='DIR', type=str, default='/data/imagenet',
@@ -56,6 +55,8 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
 parser.add_argument('--lr', '--learning-rate', default=1e-2, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--lr_policy', type=str, default='fix_step', help='learning rate update policy')
+parser.add_argument('--lr_fix_step', type=int, default=30, help='learning rate step for fix_step')
+parser.add_argument('--lr_custom_step', type=list, default=[20,30,40], help='learning rate steps for custom_step')
 parser.add_argument('--lr_decay', type=float, default=0.98, help='decay for every epoch')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
