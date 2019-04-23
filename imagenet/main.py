@@ -62,7 +62,8 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
-parser.add_argument('--nesterov',  action='store_true', default=False)
+parser.add_argument('--nesterov', action='store_true', default=False)
+parser.add_argument('--no-decay-depth', action='store_true', default=False)
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -217,10 +218,12 @@ def main_worker(gpu, ngpus_per_node, args):
     params = []
     for key, value in params_dict.items():
         shape = value.shape
-        if len(shape) == 4 && shape[1] == 1:
+        if len(shape) == 4 and shape[1] == 1:
             params += [{'params':value, 'weight_decay':0}]
         else:
             params += [{'params':value}]
+    if args.no_decay_depth:
+      params = model.parameters()
     optimizer = torch.optim.SGD(params, args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay,
@@ -231,12 +234,12 @@ def main_worker(gpu, ngpus_per_node, args):
         if os.path.isfile(args.resume_file):
             logging.info("=> loading checkpoint '{}'".format(args.resume_file))
             checkpoint = torch.load(args.resume_file)
-            args.start_epoch = checkpoint['epoch']
             best_acc1 = checkpoint['best_acc1']
             if args.gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
                 best_acc1 = best_acc1.to(args.gpu)
-            #model.load_state_dict(checkpoint['state_dict'])
+            args.start_epoch = checkpoint['epoch']
+            logging.info("=> loaded parameter from epoch {} with best acc {}"
+                .format(args.start_epoch, best_acc1))
             utils.load_state_dict(model, checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             logging.info("=> loaded checkpoint '{}' (epoch {})"
