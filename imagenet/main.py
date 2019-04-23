@@ -39,6 +39,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet18)')
+
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 8)')
 parser.add_argument('--epochs', default=90, type=int, metavar='N',
@@ -63,13 +64,15 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
-parser.add_argument('--nesterov',  action='store_true', default=False)
-parser.add_argument('-p', '--print-freq', default=10, type=int,
-                    metavar='N', help='print frequency (default: 10)')
-parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                    help='evaluate model on validation set')
+parser.add_argument('--nesterov', action='store_true', default=False)
+parser.add_argument('--decay-depth', action='store_true', default=False)
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
+parser.add_argument('-p', '--print-freq', default=10, type=int,
+                    metavar='N', help='print frequency (default: 10)')
+
+parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
+                    help='evaluate model on validation set')
 parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
@@ -160,6 +163,8 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.gpu is not None:
         logging.info("Use GPU: {} for training".format(args.gpu))
 
+    cudnn.benchmark = True
+
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -181,6 +186,23 @@ def main_worker(gpu, ngpus_per_node, args):
             model = models.__dict__[args.arch]()
     elif args.arch in model_zoo.model_names:
         model = model_zoo.models(args.arch)
+
+    # optionally resume from a checkpoint
+    if args.resume:
+        if os.path.isfile(args.resume_file):
+            logging.info("=> loading checkpoint '{}'".format(args.resume_file))
+            checkpoint = torch.load(args.resume_file)
+            best_acc1 = checkpoint['best_acc1']
+            if args.gpu is not None:
+                best_acc1 = best_acc1.to(args.gpu)
+            args.start_epoch = checkpoint['epoch']
+            logging.info("=> loaded parameter from epoch {} with best acc {}"
+                .format(args.start_epoch, best_acc1))
+            utils.load_state_dict(model, checkpoint['state_dict'])
+            logging.info("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume_file, checkpoint['epoch']))
+        else:
+            logging.info("=> no checkpoint found at '{}'".format(args.resume_file))
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -218,7 +240,7 @@ def main_worker(gpu, ngpus_per_node, args):
     params = []
     for key, value in params_dict.items():
         shape = value.shape
-        if len(shape) == 4 and shape[1] == 1:
+        if len(shape) == 4 and shape[1] == 1 and args.decay_depth:
             params += [{'params':value, 'weight_decay':0}]
         else:
             params += [{'params':value}]
@@ -226,26 +248,8 @@ def main_worker(gpu, ngpus_per_node, args):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay,
                                 nesterov=args.nesterov)
-
-    # optionally resume from a checkpoint
     if args.resume:
-        if os.path.isfile(args.resume_file):
-            logging.info("=> loading checkpoint '{}'".format(args.resume_file))
-            checkpoint = torch.load(args.resume_file)
-            args.start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
-            #model.load_state_dict(checkpoint['state_dict'])
-            utils.load_state_dict(model, checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            logging.info("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume_file, checkpoint['epoch']))
-        else:
-            logging.info("=> no checkpoint found at '{}'".format(args.resume_file))
-
-    cudnn.benchmark = True
+        optimizer.load_state_dict(checkpoint['optimizer'])
 
     # Data loading code
     traindir = os.path.join(args.data, 'train')
@@ -304,7 +308,7 @@ def main_worker(gpu, ngpus_per_node, args):
         best_acc1 = max(acc1, best_acc1)
 
         if args.tensorboard is not None:
-            args.tensorboard.add_scalar('Train/lr', lr, epoch)
+            args.tensorboard.add_scalar(args.arch + '-' + args.case + '/lr', lr, epoch)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
@@ -365,8 +369,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             progress.print(i)
 
     if args.tensorboard is not None:
-        args.tensorboard.add_scalar('Train/top5', top5.avg, epoch)
-        args.tensorboard.add_scalar('Train/top1', top1.avg, epoch)
+        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/train-top5', top5.avg, epoch)
+        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/train-top1', top1.avg, epoch)
 
 
 def validate(val_loader, model, criterion, args, epoch=0):
@@ -405,8 +409,8 @@ def validate(val_loader, model, criterion, args, epoch=0):
                 progress.print(i)
 
     if args.tensorboard is not None and args.evaluate != True:
-        args.tensorboard.add_scalar('Eval/top5', top5.avg, epoch)
-        args.tensorboard.add_scalar('Eval/top1', top1.avg, epoch)
+        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/eval-top5', top5.avg, epoch)
+        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/eval-top1', top1.avg, epoch)
     return top1.avg, top5.avg
 
 
