@@ -4,5 +4,7 @@ if [ "$FASTDIR" == "" ]; then
 fi
 
 cd $FASTDIR/git/pytorch-examples/imagenet
-python main.py --data $FASTDIR/data/imagenet/ --arch resnet18 --lr_decay 0.1 --case 'iter-size1_batch256' --tensorboard --nesterov
+python main.py --data $FASTDIR/data/imagenet/ --arch resnet18 \
+  --lr_fix_step 10 --lr_decay 0.3 --nesterov
+  --case 'batch256-nesterov'
 cd -
