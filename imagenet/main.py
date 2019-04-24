@@ -34,20 +34,14 @@ model_names = sorted(model_zoo.model_names + pytorch_names)
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--data', metavar='DIR', type=str, default='/data/imagenet',
                     help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
-                    choices=model_names,
-                    help='model architecture: ' +
-                        ' | '.join(model_names) +
-                        ' (default: resnet18)')
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18', choices=model_names,
+                    help='model architecture: ' + ' | '.join(model_names) + ' (default: resnet18)')
 
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
-                    help='number of data loading workers (default: 8)')
-parser.add_argument('--epochs', default=90, type=int, metavar='N',
-                    help='number of total epochs to run')
-parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                    help='manual epoch number (useful on restarts)')
+parser.add_argument('-j', '--workers', default=8, type=int, metavar='N', help='number of data loading workers (default: 8)')
+parser.add_argument('--epochs', default=90, type=int, metavar='N', help='number of total epochs to run')
+parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
 parser.add_argument('--iter-size', default=1, type=int)
-parser.add_argument('--val-batch-size', default=50, type=int)
+parser.add_argument('--val-batch-size', '-v', default=50, type=int)
 parser.add_argument('-b', '--batch-size', default=256, type=int, metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -60,9 +54,11 @@ parser.add_argument('--lr_decay', type=float, default=0.98, help='decay for ever
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float, help='weight decay (default: 1e-4)', dest='weight_decay')
 parser.add_argument('--nesterov', action='store_true', default=False)
-parser.add_argument('--decay-depth', action='store_true', default=False)
+parser.add_argument('--no-decay-small', action='store_false', default=True)
 parser.add_argument('--pretrained', dest='pretrained', action='store_true', help='use pre-trained model')
+
 parser.add_argument('-p', '--print-freq', default=10, type=int, help='print frequency (default: 10)')
+parser.add_argument('-s', '--save-freq', default=-1, type=int, help='epoch to save model (default: -1)')
 
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -233,7 +229,7 @@ def main_worker(gpu, ngpus_per_node, args):
     params = []
     for key, value in params_dict.items():
         shape = value.shape
-        if len(shape) == 4 and shape[1] == 1 and args.decay_depth:
+        if args.no_decay_small and ((len(shape) == 4 and shape[1] == 1) or (len(shape) == 1)):
             params += [{'params':value, 'weight_decay':0}]
         else:
             params += [{'params':value}]
