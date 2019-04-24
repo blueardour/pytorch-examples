@@ -48,28 +48,21 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--iter-size', default=1, type=int)
 parser.add_argument('--val-batch-size', default=50, type=int)
-parser.add_argument('-b', '--batch-size', default=256, type=int,
-                    metavar='N',
+parser.add_argument('-b', '--batch-size', default=256, type=int, metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                          'batch size of all GPUs on the current node when '
                          'using Data Parallel or Distributed Data Parallel')
-parser.add_argument('--lr', '--learning-rate', default=1e-2, type=float,
-                    metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--lr', '--learning-rate', default=1e-2, type=float, help='initial learning rate', dest='lr')
 parser.add_argument('--lr_policy', type=str, default='fix_step', help='learning rate update policy')
 parser.add_argument('--lr_fix_step', type=int, default=30, help='learning rate step for fix_step')
 parser.add_argument('--lr_custom_step', type=list, default=[20,30,40], help='learning rate steps for custom_step')
 parser.add_argument('--lr_decay', type=float, default=0.98, help='decay for every epoch')
-parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
-                    help='momentum')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
-                    metavar='W', help='weight decay (default: 1e-4)',
-                    dest='weight_decay')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
+parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float, help='weight decay (default: 1e-4)', dest='weight_decay')
 parser.add_argument('--nesterov', action='store_true', default=False)
 parser.add_argument('--decay-depth', action='store_true', default=False)
-parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                    help='use pre-trained model')
-parser.add_argument('-p', '--print-freq', default=10, type=int,
-                    metavar='N', help='print frequency (default: 10)')
+parser.add_argument('--pretrained', dest='pretrained', action='store_true', help='use pre-trained model')
+parser.add_argument('-p', '--print-freq', default=10, type=int, help='print frequency (default: 10)')
 
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
