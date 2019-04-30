@@ -41,9 +41,9 @@ import scipy.io as sio
 class DatasetFromMat(data.Dataset):
     def __init__(self, image_dir, filters='x2', input_label='im_b_y', target_label='im_gt_y'):
         super(DatasetFromMat, self).__init__()
-        val_list = glob.glob(os.path.join(image_dir, "*.mat"))
+        lists = glob.glob(os.path.join(image_dir, "*.mat"))
         self.image_filenames = []
-        for name in val_list:
+        for name in lists:
             if filters in name:
                 self.image_filenames.append(name)
         #[join(image_dir, x) for x in listdir(image_dir) if is_image_file(x)]
@@ -70,9 +70,15 @@ import h5py
 class DatasetFromHdf5(data.Dataset):
     def __init__(self, file_path):
         super(DatasetFromHdf5, self).__init__()
-        hf = h5py.File(file_path)
-        self.data = hf.get('data')
-        self.target = hf.get('label')
+        lists = glob.glob(os.path.join(file_path, "*.h5"))
+        if len(lists) != 1:
+            raise RuntimeError("multiple h5 file found")
+
+        self.data = None
+        for name in lists:
+            hf = h5py.File(file_path)
+            self.data = hf.get('data')
+            self.target = hf.get('label')
 
     def __getitem__(self, index):
         return torch.from_numpy(self.data[index,:,:,:]).float(), torch.from_numpy(self.target[index,:,:,:]).float()

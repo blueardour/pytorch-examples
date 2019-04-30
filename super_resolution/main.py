@@ -133,7 +133,7 @@ def main():
         logging.info('evaluate accuracy %f' % acc)
         return
 
-    train_dataset = DatasetFromHdf5("data/train.h5")
+    train_dataset = DatasetFromHdf5(os.path.join(args.dataset, 'train')))
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, drop_last=True)
 
