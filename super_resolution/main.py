@@ -21,7 +21,7 @@ scales = [2,3,4]
 parser = argparse.ArgumentParser(description="PyTorch SR")
 parser.add_argument('--upscale_factor', '-u', type=int, default=2, choices=scales, help="super resolution upscale factor")
 
-parser.add_argument('--dataset', metavar='DIR', type=str, default='/data/imagenet', help='path to dataset')
+parser.add_argument('--dataset', metavar='DIR', type=str, default='/data/sisr', help='path to dataset')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='VDSR', choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) + ' (default: VDSR)')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N', help='number of data loading workers (default: 8)')
