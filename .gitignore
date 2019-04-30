@@ -5,6 +5,9 @@ data
 OpenNMT/data
 cpp/mnist/build
 cpp/dcgan/build
-imagenet/logs
-imagenet/utils
-imagenet/weights
+*/logs
+*/utils
+*/weights
+*.o
+*.swp
+*.so

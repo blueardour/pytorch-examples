@@ -286,18 +286,22 @@ def main_worker(gpu, ngpus_per_node, args):
         logging.info('learning rate %f at epoch %d' %(lr, epoch))
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        tc1, tc5 = train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
         acc1, acc5 = validate(val_loader, model, criterion, args, epoch)
-        logging.info('evaluate accuracy top5(%f), top1(%f), best top1: %f' % (acc5, acc1, best_acc1))
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
+        logging.info('evaluate accuracy top5(%f), top1(%f), best top1: %f' % (acc5, acc1, best_acc1))
 
         if args.tensorboard is not None:
             args.tensorboard.add_scalar(args.arch + '-' + args.case + '/lr', lr, epoch)
+            args.tensorboard.add_scalar(args.arch + '-' + args.case + '/eval-top5', acc5, epoch)
+            args.tensorboard.add_scalar(args.arch + '-' + args.case + '/eval-top1', acc1, epoch)
+            args.tensorboard.add_scalar(args.arch + '-' + args.case + '/train-top5', tc5, epoch)
+            args.tensorboard.add_scalar(args.arch + '-' + args.case + '/train-top1', tc1, epoch)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
@@ -311,11 +315,11 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
+    batch_time = utils.AverageMeter('Time', ':6.3f')
+    data_time = utils.AverageMeter('Data', ':6.3f')
+    losses = utils.AverageMeter('Loss', ':.4e')
+    top1 = utils.AverageMeter('Acc@1', ':6.2f')
+    top5 = utils.AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(len(train_loader), batch_time, data_time, losses, top1,
                              top5, prefix="Epoch: [{}]".format(epoch))
 
@@ -327,8 +331,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        if args.gpu is not None:
-            input = input.cuda(args.gpu, non_blocking=True)
+        input = input.cuda(args.gpu, non_blocking=True)
         target = target.cuda(args.gpu, non_blocking=True)
 
         # compute output
@@ -357,16 +360,14 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.print(i)
 
-    if args.tensorboard is not None:
-        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/train-top5', top5.avg, epoch)
-        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/train-top1', top1.avg, epoch)
+    return top1.avg, top5.avg
 
 
 def validate(val_loader, model, criterion, args, epoch=0):
-    batch_time = AverageMeter('Time', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
+    batch_time = utils.AverageMeter('Time', ':6.3f')
+    losses = utils.AverageMeter('Loss', ':.4e')
+    top1 = utils.AverageMeter('Acc@1', ':6.2f')
+    top5 = utils.AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(len(val_loader), batch_time, losses, top1, top5,
                              prefix='Test: ')
 
@@ -376,8 +377,7 @@ def validate(val_loader, model, criterion, args, epoch=0):
     with torch.no_grad():
         end = time.time()
         for i, (input, target) in enumerate(val_loader):
-            if args.gpu is not None:
-                input = input.cuda(args.gpu, non_blocking=True)
+            input = input.cuda(args.gpu, non_blocking=True)
             target = target.cuda(args.gpu, non_blocking=True)
 
             # compute output
@@ -397,40 +397,7 @@ def validate(val_loader, model, criterion, args, epoch=0):
             if i % args.print_freq == 0:
                 progress.print(i)
 
-    if args.tensorboard is not None and args.evaluate != True:
-        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/eval-top5', top5.avg, epoch)
-        args.tensorboard.add_scalar(args.arch + '-' + args.case + '/eval-top1', top1.avg, epoch)
     return top1.avg, top5.avg
-
-
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    torch.save(state, filename)
-    if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self, name, fmt=':f'):
-        self.name = name
-        self.fmt = fmt
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
 
 
 class ProgressMeter(object):
@@ -448,30 +415,6 @@ class ProgressMeter(object):
         num_digits = len(str(num_batches // 1))
         fmt = '{:' + str(num_digits) + 'd}'
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
-
-
-def adjust_learning_rate(optimizer, epoch, args):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    lr = args.lr * (0.1 ** (epoch // 30))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the accuracy over the k top predictions for the specified values of k"""
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res
 
 
 if __name__ == '__main__':
