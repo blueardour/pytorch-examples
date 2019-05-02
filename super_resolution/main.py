@@ -20,16 +20,16 @@ scales = [2,3,4]
 # Training settings
 parser = argparse.ArgumentParser(description="PyTorch SR")
 parser.add_argument('--upscale_factor', '-u', type=int, default=2, choices=scales, help="super resolution upscale factor")
-
-parser.add_argument('--dataset', metavar='DIR', type=str, default='/data/sisr', help='path to dataset')
+parser.add_argument('--dataset', metavar='DIR', type=str, default='/data/super-resolution/vdsr/', help='path to dataset')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='VDSR', choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) + ' (default: VDSR)')
+
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N', help='number of data loading workers (default: 8)')
 parser.add_argument('--epochs', default=90, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
 parser.add_argument('--iter-size', default=1, type=int)
-parser.add_argument('--val-batch-size', '-v', default=1, choices=[1], type=int)
-parser.add_argument('-b', '--batch-size', default=256, type=int, metavar='N')
+parser.add_argument('--test-batch-size', '-t', default=1, choices=[1], type=int)
+parser.add_argument('--batch-size', '-b', default=256, type=int, metavar='N')
 parser.add_argument('--lr', '--learning-rate', default=1e-2, type=float, help='initial learning rate', dest='lr')
 parser.add_argument('--lr_policy', type=str, default='fix_step', help='learning rate update policy')
 parser.add_argument('--lr_fix_step', type=int, default=30, help='learning rate step for fix_step')
@@ -40,10 +40,10 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float, help='we
 parser.add_argument('--nesterov', action='store_true', default=False)
 parser.add_argument('--no-decay-small', action='store_false', default=True)
 parser.add_argument("--clip", type=float, default=0.4, help="Clipping Gradients. Default=0.4")
-parser.add_argument('-p', '--logging.info-freq', default=10, type=int, help='print frequency (default: 10)')
-parser.add_argument('-s', '--save-freq', default=-1, type=int, help='epoch to save model (default: -1)')
-parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true', help='evaluate model on validation set')
-parser.add_argument('--seed', default=None, type=int, help='seed for initializing training. ')
+parser.add_argument('--print-freq', '-p', default=10, type=int, help='print frequency (default: 10)')
+parser.add_argument('--save-freq', '-s', default=-1, type=int, help='epoch to save model (default: -1)')
+parser.add_argument('--evaluate', '-e', dest='evaluate', action='store_true', help='evaluate model on validation set')
+parser.add_argument('--seed', default=3, type=int, help='seed for initializing training. ')
 parser.add_argument('--resume', '-r', action='store_true', default=False)
 parser.add_argument('--pretrained', default='', type=str, help='path to pretrained model (default: none)')
 parser.add_argument('--log_dir', type=str, default='logs', help='log dir')
@@ -78,6 +78,8 @@ def main():
         random.seed(args.seed)
         torch.manual_seed(args.seed)
         cudnn.deterministic = True
+    else:
+        logging.info('You have chosen to training without setting a seed')
 
     ngpus_per_node = torch.cuda.device_count()
     logging.info('gpu number on the node {}'.format(ngpus_per_node))
@@ -121,12 +123,14 @@ def main():
         else:
             model = torch.nn.DataParallel(model).cuda()
 
-    logging.info("===> Loading datasets")
+    criterion = nn.MSELoss(size_average=False).cuda()
+
+    logging.info("===> Loading datasets with batch_size %d and test-batch-size %d" % (args.batch_size, args.test_batch_size))
     val_dataset = DatasetFromMat(os.path.join(args.dataset, 'val'), filters='x' + str(args.upscale_factor),
             input_label='im_b_y', target_label='im_gt_y')
 
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.val_batch_size, shuffle=False, num_workers=1, pin_memory=True)
+        val_dataset, batch_size=args.test_batch_size, shuffle=False, num_workers=1, pin_memory=True)
 
     if args.evaluate:
         acc = validate(val_loader, model, criterion, args)
@@ -136,8 +140,6 @@ def main():
     train_dataset = DatasetFromHdf5(os.path.join(args.dataset, 'train'))
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, drop_last=True)
-
-    criterion = nn.MSELoss(size_average=False)
 
     logging.info("===> Setting Optimizer")
     params_dict = dict(model.named_parameters())
@@ -207,7 +209,7 @@ def train(training_loader, optimizer, model, criterion, epoch, args):
 
         loss.backward() 
 
-        #nn.utils.clip_grad_norm(model.parameters(), args.clip) 
+        nn.utils.clip_grad_norm_(model.parameters(), args.clip) 
 
         if i % args.iter_size == (args.iter_size - 1):
             optimizer.step()
