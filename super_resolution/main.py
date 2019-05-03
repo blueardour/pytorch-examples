@@ -1,9 +1,13 @@
 import argparse, os
 import random, time
+import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.optim as optim
+
+#import torch.multiprocessing as mp
+#mp.set_start_method('spawn')
 
 import utils
 import logging
@@ -24,34 +28,36 @@ parser.add_argument('--dataset', metavar='DIR', type=str, default='/data/super-r
 parser.add_argument('-a', '--arch', metavar='ARCH', default='VDSR', choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) + ' (default: VDSR)')
 
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N', help='number of data loading workers (default: 8)')
-parser.add_argument('--epochs', default=90, type=int, metavar='N', help='number of total epochs to run')
+parser.add_argument('-j', '--workers', default=1, type=int, metavar='N', help='number of data loading workers (default: 8)')
+parser.add_argument('--epochs', default=50, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
 parser.add_argument('--iter-size', default=1, type=int)
 parser.add_argument('--test-batch-size', '-t', default=1, choices=[1], type=int)
 parser.add_argument('--batch-size', '-b', default=256, type=int, metavar='N')
-parser.add_argument('--lr', '--learning-rate', default=1e-2, type=float, help='initial learning rate', dest='lr')
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float, help='initial learning rate', dest='lr')
 parser.add_argument('--lr_policy', type=str, default='fix_step', help='learning rate update policy')
-parser.add_argument('--lr_fix_step', type=int, default=30, help='learning rate step for fix_step')
+parser.add_argument('--lr_fix_step', type=int, default=5, help='learning rate step for fix_step')
 parser.add_argument('--lr_custom_step', type=list, default=[20,30,40], help='learning rate steps for custom_step')
-parser.add_argument('--lr_decay', type=float, default=0.98, help='decay for every epoch')
+parser.add_argument('--lr_decay', type=float, default=0.3, help='decay for every epoch')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float, help='weight decay (default: 1e-4)', dest='weight_decay')
 parser.add_argument('--nesterov', action='store_true', default=False)
-parser.add_argument('--no-decay-small', action='store_false', default=True)
+parser.add_argument('--no-decay-small', action='store_true', default=False)
 parser.add_argument("--clip", type=float, default=0.4, help="Clipping Gradients. Default=0.4")
+
 parser.add_argument('--print-freq', '-p', default=10, type=int, help='print frequency (default: 10)')
 parser.add_argument('--save-freq', '-s', default=-1, type=int, help='epoch to save model (default: -1)')
-parser.add_argument('--evaluate', '-e', dest='evaluate', action='store_true', help='evaluate model on validation set')
 parser.add_argument('--seed', default=3, type=int, help='seed for initializing training. ')
+
+parser.add_argument('--evaluate', '-e', dest='evaluate', action='store_true', help='evaluate model on validation set')
 parser.add_argument('--resume', '-r', action='store_true', default=False)
+parser.add_argument('--resume_file', type=str, default='checkpoint.pth.tar')
 parser.add_argument('--pretrained', default='', type=str, help='path to pretrained model (default: none)')
 parser.add_argument('--log_dir', type=str, default='logs', help='log dir')
 parser.add_argument('--weights_dir', type=str, default='./weights/', help='save weights directory')
-parser.add_argument('--resume_file', type=str, default='checkpoint.pth.tar')
 parser.add_argument('--tensorboard', action='store_true', default=False)
 parser.add_argument('--gpu', default=None, type=int, help='GPU id to use.')
-parser.add_argument('--case', type=str, default='normal', help='identify the configuration of the training')
+parser.add_argument('--case', type=str, default='official', help='identify the configuration of the training')
 
 def main():
     opt = parser.parse_args()
@@ -123,21 +129,21 @@ def main():
         else:
             model = torch.nn.DataParallel(model).cuda()
 
-    criterion = nn.MSELoss(size_average=False).cuda()
+    criterion = nn.MSELoss(reduction='sum').cuda()
 
     logging.info("===> Loading datasets with batch_size %d and test-batch-size %d" % (args.batch_size, args.test_batch_size))
-    val_dataset = DatasetFromMat(os.path.join(args.dataset, 'val'), filters='x' + str(args.upscale_factor),
+    val_dataset = dataset.DatasetFromMat(os.path.join(args.dataset, 'val'), filters='x' + str(args.upscale_factor),
             input_label='im_b_y', target_label='im_gt_y')
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.test_batch_size, shuffle=False, num_workers=1, pin_memory=True)
 
     if args.evaluate:
-        acc = validate(val_loader, model, criterion, args)
-        logging.info('evaluate accuracy %f' % acc)
+        predict, bicubic = validate(val_loader, model, criterion, args)
+        logging.info('evaluate psnr predict vs bicubic := {:.4f} vs {:.4f}'.format(predict, bicubic))
         return
 
-    train_dataset = DatasetFromHdf5(os.path.join(args.dataset, 'train'))
+    train_dataset = dataset.DatasetFromHdf5(os.path.join(args.dataset, 'train'))
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, drop_last=True)
 
@@ -161,14 +167,14 @@ def main():
         lr = utils.adjust_learning_rate(optimizer, epoch, args)
         logging.info('learning rate %f at epoch %d' %(lr, epoch))
 
-        loss = train(training_loader, optimizer, model, criterion, epoch, args)
+        loss = train(train_loader, optimizer, model, criterion, epoch, args)
 
         # evaluate on validation set
         predict, bicubic = validate(val_loader, model, criterion, args, epoch)
         is_best = predict > best_acc
         if is_best:
             best_acc = predict
-        logging.info('evaluate accuracy: {}, best: {}'.format(predict, best_acc))
+        logging.info('evaluate accuracy: {:.4f}, best: {:.4f}'.format(predict, best_acc))
 
         if args.tensorboard is not None:
             args.tensorboard.add_scalar(args.arch + '-' + args.case + '/lr', lr, epoch)
@@ -186,15 +192,16 @@ def main():
 
 
 def train(training_loader, optimizer, model, criterion, epoch, args):
-    losses = AverageMeter('Loss', ':.4e')
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
+    losses = utils.AverageMeter('Loss', ':.4e')
+    batch_time = utils.AverageMeter('Time', ':6.3f')
+    data_time = utils.AverageMeter('Data', ':6.3f')
 
     model.train()
     end = time.time()
     for i, (input, target) in enumerate(training_loader):
         data_time.update(time.time() - end)
 
+        #print(input.shape, target.shape)
         input = input.cuda(args.gpu, non_blocking=True)
         target = target.cuda(args.gpu, non_blocking=True)
 
@@ -219,14 +226,14 @@ def train(training_loader, optimizer, model, criterion, epoch, args):
         end = time.time()
 
         if i % args.print_freq == 0:
-            logging.info("===> Epoch[{}]({}/{}): Loss: {:.10f}, Batch time: {} / {}, Data time: {} / {}"
-                    .format(epoch, i, len(training_loader), losses.avg, batch_time.avg, batch_time.val, data_time.avg, data_time.val))
+            logging.info("===> Epoch[{}]({}/{}): Loss: {:.6f}, Batch time: {:.4f}, Data time: {:.4f}"
+                    .format(epoch, i, len(training_loader), losses.avg, batch_time.avg, data_time.avg))
 
-        return losses.avg
+    return losses.avg
  
-def validate(val_loader, model, criterion, args, epoch):
-    predict = AverageMeter()
-    bicubic = AverageMeter()
+def validate(val_loader, model, criterion, args, epoch=0):
+    predict = utils.AverageMeter()
+    bicubic = utils.AverageMeter()
 
     # switch to evaluate mode
     model.eval()
@@ -234,32 +241,39 @@ def validate(val_loader, model, criterion, args, epoch):
     with torch.no_grad():
         #end = time.time()
         for i, (input, target) in enumerate(val_loader):
+            im_gt_y = target.numpy()
+            im_b_y = input.numpy()
+            im_gt_y = im_gt_y[0,:,:]
+            im_b_y = im_b_y[0,:,:]
+            bicubic_psnr = utils.PSNR(im_gt_y, im_b_y, shave_border=args.upscale_factor)
+            bicubic.update(bicubic_psnr, args.test_batch_size)
 
-            psnr = utils.PSNR(target, input, shave_border=args.upscale_factor)
-            bicubic.update(psnr, args.val_batch_size)
-
-            input = input / 255.
-            tensor = torch.from_numpy(input).float().view(1, -1, input.shape[0], input.shape[1])
-            tensor = tensor.cuda(args.gpu, non_blocking=True)
+            input = input.unsqueeze(0).float()
+            input = input.cuda(args.gpu, non_blocking=True)
+            input.div_(255.0)
 
             # compute output
-            output = model(tensor)
-
+            output = model(input)
             HR = output.cpu()
             im_h_y = HR.data[0].numpy().astype(np.float32)
+            if np.isnan(np.sum(im_h_y)):
+                raise RuntimeError("Nan in data")
             im_h_y = im_h_y * 255.
             im_h_y[im_h_y < 0] = 0
             im_h_y[im_h_y > 255.] = 255.
             im_h_y = im_h_y[0,:,:]
 
-            psnr = utils.PSNR(target, im_h_y, shave_border=args.upscale_factor)
-            predict.update(psnr, args.val_batch_size)
+            #print(im_gt_y.shape, im_h_y.shape, im_b_y.shape)
+            predict_psnr = utils.PSNR(im_gt_y, im_h_y, shave_border=args.upscale_factor)
+            predict.update(predict_psnr, args.test_batch_size)
 
             # measure elapsed time
             #batch_time.update(time.time() - end)
             #end = time.time()
 
             #if i % args.print_freq == 0:
+            #logging.info("===> Eval PSNR {}/{}: model get {:.4f}, bicubic get {:.4f}"
+            #        .format(i, len(val_loader), predict_psnr, bicubic_psnr))
 
     return predict.avg, bicubic.avg
 

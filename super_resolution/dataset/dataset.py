@@ -1,6 +1,6 @@
-
+import torch
 import torch.utils.data as data
-import glob
+import glob, os
 from os import listdir
 from os.path import join
 from PIL import Image
@@ -54,12 +54,11 @@ class DatasetFromMat(data.Dataset):
     def __getitem__(self, index):
         name = self.image_filenames[index]
         im_gt_y = sio.loadmat(name)[self.target_label]
-        m_b_y = sio.loadmat(name)[self.input_label]
+        im_b_y = sio.loadmat(name)[self.input_label]
         im_gt_y = im_gt_y.astype(float)
         im_b_y = im_b_y.astype(float)
 
         im_input = im_b_y
-        #im_input = torch.from_numpy(im_input).float().view(1, -1, im_input.shape[0], im_input.shape[1])
         target = im_gt_y
         return im_input, target
 
@@ -76,7 +75,7 @@ class DatasetFromHdf5(data.Dataset):
 
         self.data = None
         for name in lists:
-            hf = h5py.File(file_path)
+            hf = h5py.File(name, "r", libver='latest', swmr=True)
             self.data = hf.get('data')
             self.target = hf.get('label')
 
