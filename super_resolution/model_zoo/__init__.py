@@ -1,5 +1,5 @@
 
-from .vsdr import VDSR
+from .vdsr import VDSR
 
 __all__ = ['models', 'model_names']
 
