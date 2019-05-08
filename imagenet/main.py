@@ -93,10 +93,15 @@ def main():
 
     if not os.path.exists(args.log_dir):
         os.makedirs(args.log_dir)
-    log_filename = os.path.join(args.log_dir, args.arch + '-' + args.case + '.txt')
+    log_filename = args.arch + '-' + args.case
+    if args.evaluate:
+        log_filename += '-eval.txt'
+    else:
+        log_filename += '.txt'
+    log_filename = os.path.join(args.log_dir, log_filename)
     utils.setup_logging(log_filename, resume=args.resume)
 
-    if args.tensorboard:
+    if args.tensorboard and args.evaluate == False:
         args.tensorboard = SummaryWriter(args.log_dir, filename_suffix='.' + args.arch + '.' + args.case)
     else:
         args.tensorboard = None
@@ -167,13 +172,17 @@ def main_worker(gpu, ngpus_per_node, args):
     logging.info('traing case: %s' % args.case)
     # create model
     logging.info("=> creating model '{}'".format(args.arch))
-    if args.arch in pytorch_names:
+    if args.arch in model_zoo.model_names and args.arch in pytorch_names:
+        logging.info("=> netork both defined in Pytorch official zoo and custom local zoo folder")
+        logging.info("=> custom local zoo folder get more priority")
+        model = model_zoo.models(args.arch)
+    elif args.arch in pytorch_names:
         if args.pretrained:
             logging.info("=> load pre-trained parapmter")
             model = models.__dict__[args.arch](pretrained=True)
         else:
             model = models.__dict__[args.arch]()
-    elif args.arch in model_zoo.model_names:
+    else:
         model = model_zoo.models(args.arch)
 
     # optionally resume from a checkpoint
@@ -181,15 +190,18 @@ def main_worker(gpu, ngpus_per_node, args):
         if os.path.isfile(args.resume_file):
             logging.info("=> loading checkpoint '{}'".format(args.resume_file))
             checkpoint = torch.load(args.resume_file)
-            best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
-                best_acc1 = best_acc1.to(args.gpu)
-            args.start_epoch = checkpoint['epoch']
+            if 'best_acc1' in checkpoint:
+                best_acc1 = checkpoint['best_acc1']
+            if 'epoch' in checkpoint:
+                args.start_epoch = checkpoint['epoch']
             logging.info("=> loaded parameter from epoch {} with best acc {}"
                 .format(args.start_epoch, best_acc1))
-            utils.load_state_dict(model, checkpoint['state_dict'])
-            logging.info("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume_file, checkpoint['epoch']))
+
+            if 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            else:
+                state_dict = checkpoint
+            utils.load_state_dict(model, state_dict)
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume_file))
 
@@ -215,15 +227,60 @@ def main_worker(gpu, ngpus_per_node, args):
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
     else:
-        # DataParallel will divide and allocate batch_size to all available GPUs
-        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
-        else:
-            model = torch.nn.DataParallel(model).cuda()
+        model = torch.nn.DataParallel(model).cuda()
+        ## DataParallel will divide and allocate batch_size to all available GPUs
+        #if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
+        #    model.features = torch.nn.DataParallel(model.features)
+        #    model.cuda()
+        #else:
+        #    model = torch.nn.DataParallel(model).cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+
+    # Data loading code
+    logging.info("loading dataset with batch_size {} and test-batch-size {}".
+        format(args.batch_size, args.val_batch_size))
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
+    valdir = os.path.join(args.data, 'val')
+    if args.val_batch_size < 1:
+        val_loader = None
+    else:
+        val_loader = torch.utils.data.DataLoader(
+          datasets.ImageFolder(valdir, transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize,
+        ])),
+        batch_size=args.val_batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True)
+
+    if args.evaluate and val_loader is not None:
+        acc1, acc5 = validate(val_loader, model, criterion, args)
+        logging.info('evaluate accuracy top1(%f), top5(%f)' % (acc1, acc5))
+        return
+
+    traindir = os.path.join(args.data, 'train')
+    train_dataset = datasets.ImageFolder(
+        traindir,
+        transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ]))
+
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    else:
+        train_sampler = None
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
 
     params_dict = dict(model.named_parameters())
     params = []
@@ -239,45 +296,6 @@ def main_worker(gpu, ngpus_per_node, args):
                                 nesterov=args.nesterov)
     if args.resume:
         optimizer.load_state_dict(checkpoint['optimizer'])
-
-    # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            #normalize,
-        ]))
-
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
-
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            #normalize,
-        ])),
-        batch_size=args.val_batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
-
-    if args.evaluate:
-        acc1, acc5 = validate(val_loader, model, criterion, args)
-        logging.info('evaluate accuracy top5(%f), top1(%f)' % (acc5, acc1))
-        return
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -339,7 +357,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), input.size(0))
         top1.update(acc1[0], input.size(0))
         top5.update(acc5[0], input.size(0))
@@ -364,16 +382,18 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
 
 def validate(val_loader, model, criterion, args, epoch=0):
+    if val_loader is None:
+        logging.info("val_loader is None, skip evaluation")
+        return 0, 0
+
     batch_time = utils.AverageMeter('Time', ':6.3f')
     losses = utils.AverageMeter('Loss', ':.4e')
     top1 = utils.AverageMeter('Acc@1', ':6.2f')
     top5 = utils.AverageMeter('Acc@5', ':6.2f')
-    progress = ProgressMeter(len(val_loader), batch_time, losses, top1, top5,
-                             prefix='Test: ')
+    progress = ProgressMeter(len(val_loader), batch_time, losses, top1, top5, prefix='Test: ')
 
     # switch to evaluate mode
     model.eval()
-
     with torch.no_grad():
         end = time.time()
         for i, (input, target) in enumerate(val_loader):
@@ -385,7 +405,7 @@ def validate(val_loader, model, criterion, args, epoch=0):
             loss = criterion(output, target)
 
             # measure accuracy and record loss
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), input.size(0))
             top1.update(acc1[0], input.size(0))
             top5.update(acc5[0], input.size(0))
